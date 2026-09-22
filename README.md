@@ -1,0 +1,933 @@
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+
+# ============================================================
+# 1. FILE LOCATIONS
+# ============================================================
+
+# Change this only if your files are stored somewhere else.
+BASE_DIR = Path(
+    r"C:\Users\YOUR_USERNAME\OneDrive - Global Business Travel"
+)
+
+# ------------------------------------------------------------
+# Input files
+# ------------------------------------------------------------
+
+KPI_FILE = BASE_DIR / "TPE_KPI_Details_Data.xlsx"
+
+INSIGHT_CORP_FILE = BASE_DIR / "InsightId_CorporateId_Mapping.xlsx"
+
+PEER_FILE = BASE_DIR / "TPE_Client_Peers.xlsx"
+
+COUNTRY_FILE = BASE_DIR / "Country_to_CountryCode_Mapping.xlsx"
+
+
+# ============================================================
+# 2. SHEET NAMES
+# ============================================================
+
+KPI_SHEET = "Sheet2"
+
+INSIGHT_CORP_SHEET = "Sheet1"
+
+PEER_SHEET = "Sheet6"
+
+# Change this to the exact sheet name if different.
+COUNTRY_SHEET = "Country_to_CountryCode_Mapping_"
+
+
+# ============================================================
+# 3. OUTPUT
+# ============================================================
+
+OUTPUT_FILE = BASE_DIR / "TPE_Benchmarking_Output.xlsx"
+
+
+# ============================================================
+# 4. READ FILES
+# ============================================================
+
+print("Reading KPI data...")
+
+kpi = pd.read_excel(
+    KPI_FILE,
+    sheet_name=KPI_SHEET
+)
+
+print("Reading Insight → Corp mapping...")
+
+insight_corp = pd.read_excel(
+    INSIGHT_CORP_FILE,
+    sheet_name=INSIGHT_CORP_SHEET
+)
+
+print("Reading peer mapping...")
+
+peers = pd.read_excel(
+    PEER_FILE,
+    sheet_name=PEER_SHEET
+)
+
+print("Reading country mapping...")
+
+country = pd.read_excel(
+    COUNTRY_FILE,
+    sheet_name=COUNTRY_SHEET
+)
+
+
+# ============================================================
+# 5. CLEAN COLUMN NAMES
+# ============================================================
+
+def clean_columns(df):
+    df = df.copy()
+
+    df.columns = (
+        df.columns
+        .astype(str)
+        .str.strip()
+        .str.replace("\n", " ", regex=False)
+        .str.replace("\r", " ", regex=False)
+    )
+
+    return df
+
+
+kpi = clean_columns(kpi)
+insight_corp = clean_columns(insight_corp)
+peers = clean_columns(peers)
+country = clean_columns(country)
+
+
+print("\nKPI columns:")
+print(kpi.columns.tolist())
+
+print("\nPeer columns:")
+print(peers.columns.tolist())
+
+
+# ============================================================
+# 6. STANDARDIZE IMPORTANT COLUMN NAMES
+# ============================================================
+
+# KPI data
+kpi = kpi.rename(columns={
+    "InsightId": "InsightId",
+    "Corp_ID": "Corp_ID",
+    "KPIDate": "KPIDate",
+    "Country": "Country",
+    "KPIName": "KPIName",
+    "ProductType": "ProductType",
+    "Unit": "Unit",
+    "Currency": "Currency",
+    "Spend": "Spend",
+    "Compliance": "Compliance",
+    "KPITarget": "KPITarget",
+    "KPILosses": "KPILosses",
+    "Savings": "Savings"
+})
+
+
+# Insight → Corp
+insight_corp = insight_corp.rename(columns={
+    "InsightId": "InsightId",
+    "CorpId": "Corp_ID"
+})
+
+
+# Peer table
+peers = peers.rename(columns={
+    "corp_id": "Target_Corp_ID",
+    "client_name": "Client_Name",
+    "pos_ctry": "POS_Country_Code",
+    "peertype": "Peer_Type"
+})
+
+
+# ============================================================
+# 7. DATA TYPE CLEANING
+# ============================================================
+
+kpi["InsightId"] = pd.to_numeric(
+    kpi["InsightId"],
+    errors="coerce"
+)
+
+kpi["Corp_ID"] = (
+    kpi["Corp_ID"]
+    .astype(str)
+    .str.strip()
+    .str.upper()
+)
+
+kpi["Country"] = (
+    kpi["Country"]
+    .astype(str)
+    .str.strip()
+)
+
+kpi["KPIName"] = (
+    kpi["KPIName"]
+    .astype(str)
+    .str.strip()
+)
+
+kpi["ProductType"] = (
+    kpi["ProductType"]
+    .astype(str)
+    .str.strip()
+)
+
+kpi["Currency"] = (
+    kpi["Currency"]
+    .astype(str)
+    .str.strip()
+    .str.upper()
+)
+
+kpi["KPIDate"] = pd.to_datetime(
+    kpi["KPIDate"],
+    errors="coerce"
+)
+
+
+# Numeric KPI columns
+numeric_columns = [
+    "Unit",
+    "Spend",
+    "Compliance",
+    "KPITarget",
+    "KPILosses",
+    "Savings"
+]
+
+for col in numeric_columns:
+
+    if col in kpi.columns:
+
+        kpi[col] = pd.to_numeric(
+            kpi[col],
+            errors="coerce"
+        )
+
+
+# ============================================================
+# 8. INSIGHT → CORP MAPPING
+# ============================================================
+
+insight_corp["InsightId"] = pd.to_numeric(
+    insight_corp["InsightId"],
+    errors="coerce"
+)
+
+insight_corp["Corp_ID"] = (
+    insight_corp["Corp_ID"]
+    .astype(str)
+    .str.strip()
+    .str.upper()
+)
+
+
+# Remove duplicate mappings
+insight_corp = insight_corp.drop_duplicates(
+    subset=["InsightId", "Corp_ID"]
+)
+
+
+# ============================================================
+# 9. USE INSIGHT ID MAPPING IF NEEDED
+# ============================================================
+
+# If Corp_ID already exists in KPI data, keep it.
+# Otherwise map InsightId → Corp_ID.
+
+if "Corp_ID" not in kpi.columns:
+
+    kpi = kpi.merge(
+        insight_corp,
+        on="InsightId",
+        how="left"
+    )
+
+else:
+
+    # Check whether Corp_ID is missing
+    missing_corp = (
+        kpi["Corp_ID"].isna()
+        | (kpi["Corp_ID"].astype(str).str.strip() == "")
+    )
+
+    if missing_corp.any():
+
+        mapping = insight_corp[
+            ["InsightId", "Corp_ID"]
+        ].drop_duplicates(
+            subset=["InsightId"]
+        )
+
+        kpi_missing = kpi.loc[
+            missing_corp
+        ].drop(columns=["Corp_ID"])
+
+        kpi_missing = kpi_missing.merge(
+            mapping,
+            on="InsightId",
+            how="left"
+        )
+
+        kpi.loc[
+            missing_corp,
+            "Corp_ID"
+        ] = kpi_missing["Corp_ID"].values
+
+
+# ============================================================
+# 10. COUNTRY CODE MAPPING
+# ============================================================
+
+# Find the actual country-name and numeric-code columns
+# automatically.
+
+country_code_col = None
+country_name_col = None
+
+for col in country.columns:
+
+    col_lower = col.lower()
+
+    if (
+        "iso_numeric" in col_lower
+        and "ctry" in col_lower
+    ):
+        country_code_col = col
+
+    if (
+        "country_nm" in col_lower
+        or col_lower.endswith("country_name")
+    ):
+        country_name_col = col
+
+
+if country_code_col is None:
+
+    raise ValueError(
+        "Could not find numeric country-code column "
+        "in country mapping file."
+    )
+
+
+if country_name_col is None:
+
+    raise ValueError(
+        "Could not find country-name column "
+        "in country mapping file."
+    )
+
+
+country_lookup = country[
+    [
+        country_code_col,
+        country_name_col
+    ]
+].copy()
+
+
+country_lookup.columns = [
+    "POS_Country_Code",
+    "Country"
+]
+
+
+country_lookup["POS_Country_Code"] = pd.to_numeric(
+    country_lookup["POS_Country_Code"],
+    errors="coerce"
+)
+
+
+country_lookup["Country"] = (
+    country_lookup["Country"]
+    .astype(str)
+    .str.strip()
+)
+
+
+country_lookup = country_lookup.drop_duplicates(
+    subset=["POS_Country_Code"]
+)
+
+
+# ============================================================
+# 11. CLEAN PEER DATA
+# ============================================================
+
+peers["Target_Corp_ID"] = (
+    peers["Target_Corp_ID"]
+    .astype(str)
+    .str.strip()
+    .str.upper()
+)
+
+peers["Client_Name"] = (
+    peers["Client_Name"]
+    .astype(str)
+    .str.strip()
+)
+
+peers["Peer_Type"] = (
+    peers["Peer_Type"]
+    .astype(str)
+    .str.strip()
+)
+
+peers["POS_Country_Code"] = pd.to_numeric(
+    peers["POS_Country_Code"],
+    errors="coerce"
+)
+
+
+# ============================================================
+# 12. CONVERT POS COUNTRY CODE → COUNTRY
+# ============================================================
+
+peers = peers.merge(
+    country_lookup,
+    on="POS_Country_Code",
+    how="left"
+)
+
+
+# ============================================================
+# 13. IDENTIFY PEER COLUMNS
+# ============================================================
+
+peer_columns = [
+    col
+    for col in peers.columns
+    if str(col).lower().startswith("peer")
+]
+
+
+print("\nPeer columns found:")
+print(peer_columns)
+
+
+# ============================================================
+# 14. UNPIVOT PEER1...PEERN
+# ============================================================
+
+peer_long = peers.melt(
+    id_vars=[
+        "Target_Corp_ID",
+        "Client_Name",
+        "POS_Country_Code",
+        "Country",
+        "Peer_Type"
+    ],
+    value_vars=peer_columns,
+    var_name="Peer_Rank",
+    value_name="Peer_Corp_ID"
+)
+
+
+# Remove blank peers
+peer_long["Peer_Corp_ID"] = (
+    peer_long["Peer_Corp_ID"]
+    .astype(str)
+    .str.strip()
+    .str.upper()
+)
+
+
+peer_long = peer_long[
+    ~peer_long["Peer_Corp_ID"].isin(
+        ["", "NAN", "NONE", "NULL"]
+    )
+].copy()
+
+
+# Convert peer1 → 1, peer2 → 2, etc.
+peer_long["Peer_Rank"] = (
+    peer_long["Peer_Rank"]
+    .str.extract(r"(\d+)")
+    .astype(float)
+)
+
+
+# Remove target itself if accidentally present
+peer_long = peer_long[
+    peer_long["Peer_Corp_ID"]
+    != peer_long["Target_Corp_ID"]
+]
+
+
+# Remove duplicate peers for same target/country/type
+peer_long = peer_long.drop_duplicates(
+    subset=[
+        "Target_Corp_ID",
+        "POS_Country_Code",
+        "Peer_Type",
+        "Peer_Corp_ID"
+    ]
+)
+
+
+# ============================================================
+# 15. MATCH PEERS TO KPI DATA
+# ============================================================
+
+# IMPORTANT:
+# We match:
+#
+# Peer Corp ID
+# +
+# Country
+#
+# because peer lists are country-specific.
+
+
+peer_kpi = peer_long.merge(
+    kpi,
+    left_on=[
+        "Peer_Corp_ID",
+        "Country"
+    ],
+    right_on=[
+        "Corp_ID",
+        "Country"
+    ],
+    how="left",
+    suffixes=(
+        "_PeerMap",
+        "_KPI"
+    )
+)
+
+
+# ============================================================
+# 16. IDENTIFY COMPLIANT PEERS
+# ============================================================
+
+# Default rule:
+#
+# Compliance >= KPITarget
+#
+# This can be changed easily if your project uses
+# another compliance definition.
+
+peer_kpi["Is_Compliant"] = (
+    peer_kpi["Compliance"]
+    >=
+    peer_kpi["KPITarget"]
+)
+
+
+# Missing KPI data cannot be compliant
+peer_kpi.loc[
+    peer_kpi["Compliance"].isna(),
+    "Is_Compliant"
+] = False
+
+
+# ============================================================
+# 17. PEER COVERAGE SUMMARY
+# ============================================================
+
+coverage = (
+    peer_kpi
+    .groupby(
+        [
+            "Target_Corp_ID",
+            "Client_Name",
+            "POS_Country_Code",
+            "Country",
+            "Peer_Type"
+        ],
+        dropna=False
+    )
+    .agg(
+        Total_Peers=(
+            "Peer_Corp_ID",
+            "nunique"
+        ),
+
+        Peers_With_KPI_Data=(
+            "Corp_ID",
+            lambda x: x.notna().sum()
+        ),
+
+        Compliant_Peers=(
+            "Is_Compliant",
+            "sum"
+        )
+    )
+    .reset_index()
+)
+
+
+# Eligibility requirement from meeting
+coverage["Eligible_5_Peers"] = (
+    coverage["Compliant_Peers"] >= 5
+)
+
+
+# ============================================================
+# 18. KEEP ONLY CLIENTS WITH >=5 COMPLIANT PEERS
+# ============================================================
+
+eligible_groups = coverage[
+    coverage["Eligible_5_Peers"]
+].copy()
+
+
+# Create key for efficient filtering
+eligible_keys = eligible_groups[
+    [
+        "Target_Corp_ID",
+        "POS_Country_Code",
+        "Peer_Type"
+    ]
+].drop_duplicates()
+
+
+peer_kpi_eligible = peer_kpi.merge(
+    eligible_keys,
+    on=[
+        "Target_Corp_ID",
+        "POS_Country_Code",
+        "Peer_Type"
+    ],
+    how="inner"
+)
+
+
+# ============================================================
+# 19. KEEP ONLY COMPLIANT PEERS
+# ============================================================
+
+compliant_peers = peer_kpi_eligible[
+    peer_kpi_eligible["Is_Compliant"]
+].copy()
+
+
+# ============================================================
+# 20. BENCHMARK STATISTICS
+# ============================================================
+
+group_columns = [
+    "Target_Corp_ID",
+    "Client_Name",
+    "POS_Country_Code",
+    "Country",
+    "Peer_Type",
+    "KPIDate",
+    "KPIName",
+    "ProductType",
+    "Currency"
+]
+
+
+peer_stats = (
+    compliant_peers
+    .groupby(
+        group_columns,
+        dropna=False
+    )
+    .agg(
+        Peer_Count=(
+            "Peer_Corp_ID",
+            "nunique"
+        ),
+
+        Peer_Average_Compliance=(
+            "Compliance",
+            "mean"
+        ),
+
+        Peer_StdDev_Compliance=(
+            "Compliance",
+            "std"
+        ),
+
+        Peer_Min_Compliance=(
+            "Compliance",
+            "min"
+        ),
+
+        Peer_Max_Compliance=(
+            "Compliance",
+            "max"
+        ),
+
+        Peer_Average_Spend=(
+            "Spend",
+            "mean"
+        ),
+
+        Peer_Average_KPILosses=(
+            "KPILosses",
+            "mean"
+        ),
+
+        Peer_Average_Savings=(
+            "Savings",
+            "mean"
+        )
+    )
+    .reset_index()
+)
+
+
+# ============================================================
+# 21. GET TARGET CLIENT KPI
+# ============================================================
+
+# Target client = Target_Corp_ID
+#
+# Country = target POS country
+
+
+target_kpi = kpi.merge(
+    eligible_keys,
+    left_on="Corp_ID",
+    right_on="Target_Corp_ID",
+    how="inner"
+)
+
+
+target_kpi = target_kpi[
+    target_kpi["Country"]
+    ==
+    target_kpi["Country"]
+].copy()
+
+
+target_kpi = target_kpi[
+    [
+        "Target_Corp_ID",
+        "KPIDate",
+        "KPIName",
+        "ProductType",
+        "Currency",
+        "Country",
+        "Compliance",
+        "Spend",
+        "KPILosses",
+        "Savings"
+    ]
+].copy()
+
+
+target_kpi = target_kpi.rename(
+    columns={
+        "Compliance": "Client_Compliance",
+        "Spend": "Client_Spend",
+        "KPILosses": "Client_KPILosses",
+        "Savings": "Client_Savings"
+    }
+)
+
+
+# ============================================================
+# 22. JOIN CLIENT KPI WITH PEER STATISTICS
+# ============================================================
+
+benchmark = peer_stats.merge(
+    target_kpi,
+    on=[
+        "Target_Corp_ID",
+        "KPIDate",
+        "KPIName",
+        "ProductType",
+        "Currency",
+        "Country"
+    ],
+    how="left"
+)
+
+
+# ============================================================
+# 23. CALCULATE BENCHMARK DIFFERENCE
+# ============================================================
+
+benchmark["Compliance_Difference"] = (
+    benchmark["Client_Compliance"]
+    -
+    benchmark["Peer_Average_Compliance"]
+)
+
+
+benchmark["Compliance_Difference_Pct"] = (
+    benchmark["Compliance_Difference"]
+    /
+    benchmark["Peer_Average_Compliance"]
+) * 100
+
+
+# ============================================================
+# 24. CALCULATE Z-SCORE
+# ============================================================
+
+benchmark["Compliance_ZScore"] = np.where(
+    benchmark["Peer_StdDev_Compliance"] > 0,
+
+    (
+        benchmark["Client_Compliance"]
+        -
+        benchmark["Peer_Average_Compliance"]
+    )
+    /
+    benchmark["Peer_StdDev_Compliance"],
+
+    np.nan
+)
+
+
+# ============================================================
+# 25. PEER DETAIL TABLE
+# ============================================================
+
+peer_detail = compliant_peers[
+    [
+        "Target_Corp_ID",
+        "Client_Name",
+        "POS_Country_Code",
+        "Country",
+        "Peer_Type",
+        "Peer_Rank",
+        "Peer_Corp_ID",
+        "KPIDate",
+        "KPIName",
+        "ProductType",
+        "Currency",
+        "Compliance",
+        "KPITarget",
+        "Spend",
+        "KPILosses",
+        "Savings"
+    ]
+].copy()
+
+
+# ============================================================
+# 26. FORMAT MONTH
+# ============================================================
+
+benchmark["Month"] = (
+    benchmark["KPIDate"]
+    .dt.to_period("M")
+    .astype(str)
+)
+
+peer_detail["Month"] = (
+    peer_detail["KPIDate"]
+    .dt.to_period("M")
+    .astype(str)
+)
+
+
+# ============================================================
+# 27. SORT
+# ============================================================
+
+benchmark = benchmark.sort_values(
+    [
+        "Client_Name",
+        "Country",
+        "KPIName",
+        "ProductType",
+        "KPIDate"
+    ]
+)
+
+
+peer_detail = peer_detail.sort_values(
+    [
+        "Client_Name",
+        "Country",
+        "KPIName",
+        "ProductType",
+        "KPIDate",
+        "Peer_Corp_ID"
+    ]
+)
+
+
+coverage = coverage.sort_values(
+    [
+        "Client_Name",
+        "Country",
+        "Peer_Type"
+    ]
+)
+
+
+# ============================================================
+# 28. SAVE EXCEL REPORT
+# ============================================================
+
+print("\nCreating Excel report...")
+
+
+with pd.ExcelWriter(
+    OUTPUT_FILE,
+    engine="openpyxl"
+) as writer:
+
+    coverage.to_excel(
+        writer,
+        sheet_name="Peer_Coverage",
+        index=False
+    )
+
+    benchmark.to_excel(
+        writer,
+        sheet_name="Benchmark_Summary",
+        index=False
+    )
+
+    peer_detail.to_excel(
+        writer,
+        sheet_name="Peer_Detail",
+        index=False
+    )
+
+    peer_long.to_excel(
+        writer,
+        sheet_name="Peer_Mapping_Long",
+        index=False
+    )
+
+    peer_kpi.to_excel(
+        writer,
+        sheet_name="Peer_KPI_Match",
+        index=False
+    )
+
+    kpi.to_excel(
+        writer,
+        sheet_name="Clean_KPI_Data",
+        index=False
+    )
+
+
+print("\n========================================")
+print("BENCHMARKING COMPLETE")
+print("========================================")
+
+print(f"\nOutput file:")
+print(OUTPUT_FILE)
+
+print("\nCoverage:")
+print(coverage.head())
+
+print("\nBenchmark:")
+print(benchmark.head())
+
+print("\nEligible client/country groups:")
+print(
+    len(eligible_groups)
+)
